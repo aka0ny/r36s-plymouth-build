@@ -1,0 +1,93 @@
+name: Compilar Plymouth R36S ARM64 nativo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Debian 13 ARM64 sem QEMU ou PRoot
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    container:
+      image: debian:trixie
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Compilar Plymouth com duas correcoes
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TZ: Etc/UTC
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/logs"
+          (
+            set -Eeuo pipefail
+            echo '[1/5] Ambiente nativo ARM64'
+            dpkg --print-architecture | grep -Fx arm64
+            uname -m
+            echo '[2/5] Fontes Debian trixie e dependencias de compilacao'
+            echo 'deb-src http://deb.debian.org/debian trixie main' > /etc/apt/sources.list.d/plymouth-build-src.list
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl dpkg-dev build-essential fakeroot quilt file
+            apt-get build-dep -y plymouth
+            mkdir -p /build
+            cd /build
+            echo '[3/5] Codigo-fonte oficial Debian 13'
+            apt-get source 'plymouth=24.004.60-5'
+            cd plymouth-24.004.60
+            echo '[4/5] Baixando e aplicando dois patches oficiais'
+            get_patch() {
+              local commit="$1" output="$2" url
+              for url in                 "https://gitlab.freedesktop.org/plymouth/plymouth/-/commit/${commit}.patch"                 "https://cgit.freedesktop.org/plymouth/patch/?id=${commit}"; do
+                if curl -fsSL --retry 2 --connect-timeout 20 --max-time 120 "$url" -o "$output" &&
+                   grep -q '^diff --git ' "$output"; then
+                  echo "Patch obtido: $commit"
+                  return 0
+                fi
+              done
+              echo "ERRO: nao foi possivel baixar patch $commit" >&2
+              return 1
+            }
+            get_patch '63597f92d108237a3ab7d2343a602a95edddd4e5' debian/patches/0100-r36s-null-terminal.patch
+            get_patch '5c10072a978dd7566559f44a54c3e031bb4cb216' debian/patches/0101-r36s-null-renderer.patch
+            printf '\n%s\n%s\n'               '0100-r36s-null-terminal.patch'               '0101-r36s-null-renderer.patch' >> debian/patches/series
+            dpkg-source --before-build .
+            for patch in 0100-r36s-null-terminal.patch 0101-r36s-null-renderer.patch; do
+              grep -Fxq "$patch" .pc/applied-patches || { echo "ERRO: patch nao aplicado: $patch"; exit 10; }
+            done
+            echo 'Dois patches aplicados e verificados!'
+            {
+              printf 'plymouth (24.004.60-5+r36s1) trixie; urgency=medium\n\n'
+              printf '  * Backport upstream null-terminal guards, LP: #2103533.\n'
+              printf '  * Experimental para R36S, nao instalado nem testado no console.\n\n'
+              printf ' -- R36S Plymouth Build <noreply@example.invalid>  %s\n\n' "$(date -R)"
+              cat debian/changelog
+            } > debian/changelog.r36s
+            mv debian/changelog.r36s debian/changelog
+            echo '[5/5] Compilando pacotes ARM64 nativos'
+            DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc -j2
+            cp -v /build/*_arm64.deb "$GITHUB_WORKSPACE/out/"
+            test -s "$GITHUB_WORKSPACE/out/plymouth_24.004.60-5+r36s1_arm64.deb"
+            test -s "$GITHUB_WORKSPACE/out/libplymouth5_24.004.60-5+r36s1_arm64.deb"
+            for deb in "$GITHUB_WORKSPACE"/out/*.deb; do
+              dpkg-deb --field "$deb" Package Version Architecture
+            done
+            (cd "$GITHUB_WORKSPACE/out" && sha256sum ./*.deb > SHA256SUMS.txt)
+            echo 'COMPILACAO_CONCLUIDA_ARM64_GITHUB_ACTIONS'
+          ) 2>&1 | tee "$GITHUB_WORKSPACE/logs/relatorio_github_actions_plymouth.txt"
+
+      - name: Disponibilizar ZIP dos pacotes ou relatorio de falha
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Plymouth-R36S-ARM64-resultado
+          path: |
+            out/
+            logs/
+          if-no-files-found: warn
+          retention-days: 30
