@@ -1,0 +1,59 @@
+name: Build Plymouth patched Debian 13 ARM64
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl dpkg-dev quilt fakeroot build-essential
+          DEBIAN_FRONTEND=noninteractive apt-get build-dep -y plymouth
+      - name: Fetch Debian 13 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/plymouth-build
+          cd /tmp/plymouth-build
+          apt-get source plymouth=24.004.60-5
+          test -d plymouth-24.004.60
+      - name: Apply official upstream fixes for LP 2103533
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/plymouth-build/plymouth-24.004.60
+          U='https://gitlab.freedesktop.org/plymouth/plymouth/-/commit'
+          curl --fail --location --retry 3 "$U/63597f92d108237a3ab7d2343a602a95edddd4e5.patch" -o debian/patches/0100-null-terminal.patch
+          curl --fail --location --retry 3 "$U/5c10072a978dd7566559f44a54c3e031bb4cb216.patch" -o debian/patches/0101-renderer-null-terminal.patch
+          grep -q '^diff --git' debian/patches/0100-null-terminal.patch
+          grep -q '^diff --git' debian/patches/0101-renderer-null-terminal.patch
+          printf '\n0100-null-terminal.patch\n0101-renderer-null-terminal.patch\n' >> debian/patches/series
+          QUILT_PATCHES=debian/patches quilt push -a
+      - name: Build Debian arm64 packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/plymouth-build/plymouth-24.004.60
+          DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc -j2
+          mkdir -p /tmp/out
+          cp /tmp/plymouth-build/*_arm64.deb /tmp/out/
+          sha256sum /tmp/out/*.deb > /tmp/out/SHA256SUMS.txt
+          dpkg-deb --field /tmp/out/plymouth_*.deb Package Version Architecture
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Plymouth-R36S-Debian13-ARM64-CORRIGIDO
+          path: /tmp/out/
+          retention-days: 7
