@@ -19,7 +19,11 @@ else:
     # Evita reinstalar o Debian e tenta executar o APT sem seu sandbox
     # isolado, que pode falhar combinado ao QEMU + PRoot.
     modified = original.replace(
-        "/debootstrap/debootstrap --second-stage",
+        "test -s /debootstrap/functions || { echo \"ERRO: /debootstrap/functions nao encontrado no Debian ARM64\"; exit 1; }",
+        "echo 'Debian ARM64 instalado na V3; ignorando verificacao de debootstrap.'",
+        1
+    ).replace(
+        "DEBOOTSTRAP_DIR=/debootstrap /debootstrap/debootstrap --second-stage",
         "echo 'Segundo estagio ja concluido na V3; prosseguindo.'",
         1
     ).replace(
