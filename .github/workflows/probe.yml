@@ -1,0 +1,24 @@
+name: Diagnostico de runners GitHub
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verificar-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Testar runner Linux x64
+        run: |
+          uname -m
+          echo "Runner x64 iniciado com sucesso"
+  verificar-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Testar runner Linux arm64
+        run: |
+          uname -m
+          echo "Runner ARM64 iniciado com sucesso"
